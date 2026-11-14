@@ -1,0 +1,104 @@
+# Scrapes ztunnel (and waypoint) Prometheus metrics and forwards them as OTLP to TinyOlly.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mesh-metrics
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mesh-metrics
+rules:
+- apiGroups: [""]
+  resources: ["pods", "nodes", "services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mesh-metrics
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mesh-metrics
+subjects:
+- kind: ServiceAccount
+  name: mesh-metrics
+  namespace: default
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mesh-metrics-config
+  namespace: default
+data:
+  config.yaml: |
+    receivers:
+      prometheus:
+        config:
+          scrape_configs:
+          - job_name: ztunnel
+            scrape_interval: 15s
+            kubernetes_sd_configs:
+            - role: pod
+              namespaces: { names: [istio-system] }
+            relabel_configs:
+            - source_labels: [__meta_kubernetes_pod_label_app]
+              regex: ztunnel
+              action: keep
+            - source_labels: [__meta_kubernetes_pod_ip]
+              target_label: __address__
+              replacement: "$$1:15020"
+          - job_name: waypoint
+            scrape_interval: 15s
+            kubernetes_sd_configs:
+            - role: pod
+            relabel_configs:
+            - source_labels: [__meta_kubernetes_pod_label_gateway_istio_io_managed]
+              regex: istio.io-mesh-controller
+              action: keep
+            - source_labels: [__meta_kubernetes_pod_ip]
+              target_label: __address__
+              replacement: "$$1:15020"
+    processors:
+      filter/istio:
+        metrics:
+          include:
+            match_type: regexp
+            metric_names: ["^istio_(tcp|requests|request_duration|request_bytes|response_bytes).*"]
+      batch: {}
+    exporters:
+      otlp:
+        endpoint: tinyolly-otlp-receiver:4343
+        tls: { insecure: true }
+    service:
+      pipelines:
+        metrics:
+          receivers: [prometheus]
+          processors: [filter/istio, batch]
+          exporters: [otlp]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mesh-metrics
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mesh-metrics }
+  template:
+    metadata:
+      labels: { app: mesh-metrics }
+    spec:
+      serviceAccountName: mesh-metrics
+      containers:
+      - name: collector
+        image: otel/opentelemetry-collector-contrib:0.116.1
+        args: ["--config=/conf/config.yaml"]
+        volumeMounts:
+        - { name: conf, mountPath: /conf }
+      volumes:
+      - name: conf
+        configMap: { name: mesh-metrics-config }

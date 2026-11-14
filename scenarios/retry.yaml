@@ -1,0 +1,19 @@
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: productcatalog-retry
+  namespace: boutique
+spec:
+  hosts:
+  - productcatalogservice
+  http:
+  - retries:
+      attempts: 3
+      perTryTimeout: 2s
+      retryOn: 5xx,reset,connect-failure,unavailable
+    timeout: 6s
+    route:
+    - destination:
+        host: productcatalogservice
+        port:
+          number: 3550

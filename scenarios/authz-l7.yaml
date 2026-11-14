@@ -1,0 +1,20 @@
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: emptycart-checkout-only
+  namespace: boutique
+spec:
+  targetRefs:
+  - group: ""
+    kind: Service
+    name: cartservice
+  action: DENY
+  rules:
+  - from:
+    - source:
+        notPrincipals:
+        - cluster.local/ns/boutique/sa/checkoutservice
+    to:
+    - operation:
+        paths:
+        - /hipstershop.CartService/EmptyCart

@@ -1,0 +1,19 @@
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: currency-fault
+  namespace: boutique
+spec:
+  hosts:
+  - currencyservice
+  http:
+  - fault:
+      delay:
+        fixedDelay: 2s
+        percentage:
+          value: 50
+    route:
+    - destination:
+        host: currencyservice
+        port:
+          number: 7000
