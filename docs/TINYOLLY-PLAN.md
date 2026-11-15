@@ -2,7 +2,7 @@
 
 Date: 2026-11-14. Status: draft, nothing built. Companion to `PLAN.md` (the demo). The demo is the proof; this is the product work.
 
-## Pitch
+## Why
 Most observability tools handle app spans well and fall apart on proxies: duplicate nodes, double-counted rates, empty maps when there are no traces, and no way to tell mesh time from app time. TinyOlly will model **proxies, gateways and mesh layers as first-class things**, driven by OTel conventions and a small rules file, so it works for Istio ambient and sidecar, kgateway, agentgateway, Envoy Gateway, Linkerd and NGINX ingress, not just one product.
 
 ## Why tools struggle (and what TinyOlly does about it)
@@ -32,7 +32,7 @@ Order is by value and dependency. Code areas are where the change lands.
 
 **F6. Mesh view in the trace.** For proxied hops show app to proxy to proxy to app, compute **mesh time** (client span duration minus server span duration, minus network), mark retry attempts, and decode response flags (`UH`, `UF`, `NR`, `RBAC`, ...) in plain language. Area: `traces.js`, `traceMap.js`, small API addition.
 
-**F7. mTLS and policy posture.** A panel and API: % of edges with mutual TLS, plaintext edges, denied edges (RBAC flags or 403). This is the POC proof for zero trust. Area: new endpoint under `routers/`, new UI card on the map page.
+**F7. mTLS and policy posture.** A panel and API: % of edges with mutual TLS, plaintext edges, denied edges (RBAC flags or 403). This is the zero-trust proof point. Area: new endpoint under `routers/`, new UI card on the map page.
 
 **F8. Ingress view.** Traffic entering via a gateway by host and route: RED per route, 4xx/5xx by flag. Area: catalog variant keyed by route attributes.
 

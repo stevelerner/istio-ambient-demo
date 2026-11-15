@@ -69,4 +69,4 @@ Open http://localhost:5005 → **APM Service Map**, and http://localhost:5001 (t
 Run `./03-scenario.sh reset` between rehearsals.
 
 ## Docs
-`docs/PLAN.md` (demo plan and spike findings), `docs/TINYOLLY-PLAN.md` (the product changes), `docs/AMBIENT-NOTES.md` (ambient notes), `docs/DELEGATION.md` and `docs/tasks/` (Qwen delegation specs).
+`docs/PLAN.md` (demo plan and spike findings), `docs/TINYOLLY-PLAN.md` (the product changes), `docs/AMBIENT-NOTES.md` (ambient notes), `docs/METRICS.md` (mesh metrics guide), `docs/DELEGATION.md` and `docs/tasks/` (Qwen delegation specs).

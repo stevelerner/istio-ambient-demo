@@ -63,9 +63,12 @@ Run the TinyOlly work (`TINYOLLY-PLAN.md`, T0 to T6) alongside these: the spike 
 4. **Act 2, agentic mesh (core):** reuse TinyOlly's AI agent demo (Ollama) as a shopping assistant in the ambient mesh; route its LLM and MCP tool calls through open-source agentgateway; show identity, a per-tool allow/deny policy and credential brokering, with GenAI spans, tokens and tool calls in TinyOlly's AI Agents tab. Check whether OSS agentgateway can run as an ambient waypoint; otherwise use it as an in-mesh gateway.
 5. **Stretch:** sidecar-mode comparison, a collector preset for mesh naming, an MCP investigation skill for mesh issues (served only through the MCP server).
 
-## Open questions for you
-- Defaults I'll use unless you say otherwise: Online Boutique, built inside the TinyOlly repo.
-- For the empty-map-without-waypoint issue: accept it, or make TinyOlly draw edges from ztunnel TCP metrics?
+## Decisions
+- **Where does the demo live?** Decided: its own repo (`istio-ambient-demo`), not inside TinyOlly. TinyOlly keeps only platform changes.
+- **Empty map without a waypoint: accept it or draw edges from ztunnel metrics?** Decided and built: TinyOlly now derives edges from Istio metrics (F5), merges them with trace edges, and shows mTLS, plaintext and denied state.
+- **Which shop app?** Online Boutique v0.10.7, unmodified except cartservice memory raised to 256Mi.
+- **Ingress?** Istio Gateway API, not kgateway; swapping in another Gateway API implementation is a later option.
+- **Canary / version scenarios?** Not built. The scenarios are `waypoint`, `fault`, `retry`, `authz`, `probe` and `reset`.
 
 ## Phase 0 findings (2026-11-14, run on a 24 GB Mac, Colima 4 CPU / 6 GiB)
 - **Risk 1 (ambient on kind in Colima): works.** Istio 1.30.8 ambient (base, istiod, cni, ztunnel via Helm) came up healthy. Note: the Istio Helm repo's newest stable is **1.30.8**, not 1.32.0; pinned in `versions.env`.
