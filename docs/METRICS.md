@@ -23,9 +23,9 @@ Without a waypoint you get the TCP metrics only: who talks to whom and how much,
 
 ## Labels that matter
 - **Who:** `source_workload` / `destination_workload`, `source_canonical_service` / `destination_canonical_service`, and their namespaces. TinyOlly uses these to draw edges.
-- **Security:** `connection_security_policy` (`mutual_tls` or not) drives the green and orange edges and the mTLS percentage. `source_principal` / `destination_principal` are the SPIFFE identities.
-- **Outcome (waypoint):** `response_code` (HTTP status), `grpc_response_status` (gRPC status code; `7` means permission denied) and `response_flags` (Envoy's reason code; `-` means none).
-- **Who reported:** `reporter` is `source` or `destination`.
+- **Security:** `connection_security_policy` (`mutual_tls`, or `unknown` when ztunnel saw no mTLS, for example a destination outside the mesh) drives the green and orange edges and the mTLS percentage. `source_principal` / `destination_principal` are the SPIFFE identities.
+- **Outcome (waypoint):** `response_code` (HTTP status), `grpc_response_status` (gRPC status code; `7` means permission denied, `14` unavailable; absent on non-gRPC requests) and `response_flags` (Envoy's reason code; `-` means none, `UH` no healthy upstream, `UC` upstream connection terminated).
+- **Who reported:** `reporter` is `source` or `destination` on ztunnel metrics, and `waypoint` on waypoint metrics. `istio_tcp_sockets_open` carries only this label.
 
 ## Questions you can answer
 | Question | Metric and filter |

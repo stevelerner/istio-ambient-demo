@@ -41,5 +41,8 @@ Ambient is Istio without sidecars. The mesh is split in two layers you adopt sep
 | mTLS for free | ztunnel TCP metrics with `connection_security_policy=mutual_tls`; posture bar in TinyOlly |
 | L4 vs L7 layering | Spans and L7 detail appear only after the `waypoint` scenario |
 | Policy you can verify | `authz` + `probe` scenarios: a red denied edge, `find_denied` in MCP |
+| Enforced mTLS | `outsider` then `strict` scenarios: a plaintext call from outside the mesh works, then is refused |
+| Pay for L7 only where needed | `waypoint-svc <service>`: one service gets request metrics and traces, the rest stay L4 |
+| Safe rollouts | `canary` scenario: 90/10 split between v1 and a slower v2, visible per version in TinyOlly |
 | Resilience | `fault` and `retry` scenarios |
 | Ingress | Istio Gateway API (`ingress.yaml`) in front of the shop on port 5001 |

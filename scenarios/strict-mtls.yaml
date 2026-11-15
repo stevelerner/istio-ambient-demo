@@ -1,0 +1,10 @@
+# Require mTLS for every workload in the namespace. ztunnel then refuses plaintext connections,
+# for example from a pod outside the mesh (see: ./03-scenario.sh outsider).
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: strict-mtls
+  namespace: boutique
+spec:
+  mtls:
+    mode: STRICT

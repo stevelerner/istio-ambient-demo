@@ -1,0 +1,83 @@
+# Canary: run a slower v2 of productcatalogservice next to v1 and send it 10% of calls.
+# The waypoint splits traffic with Gateway API route weights; TinyOlly shows latency per version.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: productcatalogservice-v2
+  namespace: boutique
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: productcatalogservice
+      version: v2
+  template:
+    metadata:
+      labels:
+        app: productcatalogservice
+        version: v2
+    spec:
+      serviceAccountName: default
+      containers:
+      - name: server
+        image: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/productcatalogservice:v0.10.7
+        ports:
+        - containerPort: 3550
+        env:
+        - name: PORT
+          value: "3550"
+        - name: DISABLE_PROFILER
+          value: "1"
+        - name: EXTRA_LATENCY
+          value: 400ms
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits: {cpu: 200m, memory: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: productcatalogservice-v1
+  namespace: boutique
+spec:
+  selector:
+    app: productcatalogservice
+    version: v1
+  ports:
+  - name: grpc
+    port: 3550
+    targetPort: 3550
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: productcatalogservice-v2
+  namespace: boutique
+spec:
+  selector:
+    app: productcatalogservice
+    version: v2
+  ports:
+  - name: grpc
+    port: 3550
+    targetPort: 3550
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: productcatalog-canary
+  namespace: boutique
+spec:
+  parentRefs:
+  - group: ""
+    kind: Service
+    name: productcatalogservice
+    port: 3550
+  rules:
+  - backendRefs:
+    - name: productcatalogservice-v1
+      port: 3550
+      weight: 90
+    - name: productcatalogservice-v2
+      port: 3550
+      weight: 10

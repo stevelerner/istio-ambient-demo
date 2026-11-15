@@ -75,17 +75,31 @@ eq("authz-l7 notPrincipals", dig(d, "spec", "rules", 0, "from", 0, "source", "no
    ["cluster.local/ns/boutique/sa/checkoutservice"])
 eq("authz-l7 paths", dig(d, "spec", "rules", 0, "to", 0, "operation", "paths"), ["/hipstershop.CartService/EmptyCart"])
 
+docs = load("canary.yaml")
+kinds = [(x.get("kind"), dig(x, "metadata", "name")) for x in docs]
+eq("canary documents", kinds, [("Deployment", "productcatalogservice-v2"), ("Service", "productcatalogservice-v1"),
+                               ("Service", "productcatalogservice-v2"), ("HTTPRoute", "productcatalog-canary")])
+route = docs[-1] if docs else {}
+eq("canary parent", dig(route, "spec", "parentRefs", 0, "name"), "productcatalogservice")
+eq("canary weights", [(b["name"], b["weight"]) for b in dig(route, "spec", "rules", 0, "backendRefs") or []],
+   [("productcatalogservice-v1", 90), ("productcatalogservice-v2", 10)])
+eq("canary v2 labels", dig(docs[0], "spec", "template", "metadata", "labels"), {"app": "productcatalogservice", "version": "v2"}) if docs else None
+
+d = single("strict-mtls.yaml", "PeerAuthentication", "security.istio.io/v1")
+eq("strict-mtls name", dig(d, "metadata", "name"), "strict-mtls")
+eq("strict-mtls mode", dig(d, "spec", "mtls", "mode"), "STRICT")
+
 sh = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "03-scenario.sh")).read()
 if subprocess.run(["bash", "-n", os.path.join(os.path.dirname(os.path.abspath(__file__)), "03-scenario.sh")]).returncode:
     errors.append("03-scenario.sh has a syntax error")
-for word in ["waypoint", "fault", "retry", "authz", "reset", "require_kind_context", "kubectl apply", "kubectl delete"]:
+for word in ["waypoint", "waypoint-svc", "fault", "retry", "canary", "outsider", "strict", "authz", "reset", "require_kind_context", "kubectl apply", "kubectl delete"]:
     if word not in sh:
         errors.append(f"03-scenario.sh does not mention {word!r}")
 out = subprocess.run(["bash", os.path.join(os.path.dirname(os.path.abspath(__file__)), "03-scenario.sh")], capture_output=True, text=True)
 if out.returncode == 0 or "waypoint" not in out.stdout + out.stderr:
     errors.append("running 03-scenario.sh with no argument must print usage naming the scenarios and exit non-zero")
 
-for f in ["fault", "retry", "authz-l4", "authz-l7"]:
+for f in ["fault", "retry", "authz-l4", "authz-l7", "canary", "strict-mtls"]:
     r = subprocess.run(["kubectl", "apply", "--dry-run=server", "-f", D + f + ".yaml"], capture_output=True, text=True)
     if r.returncode:
         errors.append(f"{f}.yaml rejected by the cluster: {r.stderr.strip()[:200]}")

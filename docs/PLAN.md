@@ -68,7 +68,7 @@ Run the TinyOlly work (`TINYOLLY-PLAN.md`, T0 to T6) alongside these: the spike 
 - **Empty map without a waypoint: accept it or draw edges from ztunnel metrics?** Decided and built: TinyOlly now derives edges from Istio metrics (F5), merges them with trace edges, and shows mTLS, plaintext and denied state.
 - **Which shop app?** Online Boutique v0.10.7, unmodified except cartservice memory raised to 256Mi.
 - **Ingress?** Istio Gateway API, not kgateway; swapping in another Gateway API implementation is a later option.
-- **Canary / version scenarios?** Not built. The scenarios are `waypoint`, `fault`, `retry`, `authz`, `probe` and `reset`.
+- **Canary / version scenarios?** Built: `canary` (90/10 split of `productcatalogservice` v1/v2 with Gateway API weights). Scenarios: `waypoint`, `waypoint-svc`, `canary`, `outsider`, `strict`, `authz`, `probe`, `fault`, `retry` and `reset`.
 
 ## Phase 0 findings (2026-11-14, run on a 24 GB Mac, Colima 4 CPU / 6 GiB)
 - **Risk 1 (ambient on kind in Colima): works.** Istio 1.30.8 ambient (base, istiod, cni, ztunnel via Helm) came up healthy. Note: the Istio Helm repo's newest stable is **1.30.8**, not 1.32.0; pinned in `versions.env`.

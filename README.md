@@ -1,6 +1,25 @@
 # Istio ambient + TinyOlly demo
 
-See Istio's sidecar-less "ambient" service mesh working on a Mac: encrypted traffic, policy enforcement and request-level detail, drawn live in [TinyOlly](https://github.com/tinyolly/tinyolly).
+See Istio's sidecar-less "ambient" service mesh working on a Mac: encrypted traffic, policy enforcement, canary rollouts and request-level detail, drawn live in [TinyOlly](https://github.com/tinyolly/tinyolly), and queryable by an AI assistant through TinyOlly's MCP server.
+
+**What you will see**
+- A live service map of [Online Boutique](https://github.com/GoogleCloudPlatform/microservices-demo) (11 microservices) built from mesh metrics alone, with **no sidecars** and no app changes.
+- mTLS coverage, plaintext gaps and denied calls on the map.
+- Layer 7 added only where you ask for it (one service, then the whole namespace), with traces appearing when you do.
+- A 90/10 canary, an authorization policy blocking an intruder, STRICT mTLS refusing an outsider, plus fault injection and retries.
+- The same data answered in plain English by an AI assistant (see [Ask an AI about the mesh](#ask-an-ai-about-the-mesh)).
+
+```
+ browser :5001 ──▶ Istio ingress gateway ──▶ Online Boutique pods (no sidecars)
+                                                  │  traffic is tunnelled by ztunnel (per node): mTLS + L4 metrics
+                                                  │  optional waypoint (Envoy): L7 routing, policy, traces
+                                                  ▼
+       mesh-metrics collector ──OTLP──▶ TinyOlly (map, posture, metrics, traces) ◀──MCP──▶ AI assistant
+                                                  :5005 UI                        :8765
+```
+
+## Contents
+[Glossary](#glossary) · [Why ambient](#why-ambient-exists) · [Prerequisites](#prerequisites) · [Setup](#setup) · [Demo guide](#demo-guide) · [Ask an AI about the mesh](#ask-an-ai-about-the-mesh) · [Metrics guide](#metrics-guide) · [Troubleshooting](#troubleshooting) · [Docs](#docs)
 
 ## Glossary
 - **Ambient mode:** the newer Istio model with no sidecars. Proxies run per node or per namespace instead.
@@ -25,48 +44,142 @@ See Istio's sidecar-less "ambient" service mesh working on a Mac: encrypted traf
 - **Goal:** keep the mesh benefits (encryption, identity, policy, visibility) with much less overhead.
 - **How:**
   - **Cheap secure base:** ztunnel gives every workload mTLS and connection-level policy.
-  - **Pay for L7 only where needed:** waypoints add request-level routing, retries and policy for the namespaces that need them.
+  - **Pay for L7 only where needed:** waypoints add request-level routing, retries and policy for the services that need them.
 
-## What a company gets from a mesh
+**What a company gets from a mesh**
 - **Zero trust:** encrypted, identity-based traffic between services, with rules like "only checkout may call EmptyCart".
 - **Resilience:** retries, timeouts and fault injection without changing app code.
+- **Safe rollouts:** send a small share of traffic to a new version and compare it.
 - **Uniform visibility:** the same telemetry for every service, whatever language it's written in.
 
-## Why this demo
-Ambient is easy to describe but hard to see, because ztunnel is invisible. TinyOlly makes it visible:
-- **Topology:** the map is built from ztunnel metrics alone.
-- **Security:** mTLS coverage and plaintext gaps show up on the map.
-- **Policy:** a denied call appears as a red edge.
-- **Opt-in L7:** adding a waypoint makes traces and request-level detail appear.
+**Why this demo:** ambient is easy to describe but hard to see, because ztunnel is invisible. TinyOlly makes it visible: topology from ztunnel metrics, mTLS and plaintext on the map, denied calls as red edges, and traces appearing when a waypoint is added. A mesh is more than a load balancer: a load balancer decides where a request goes, a mesh also decides whether it is allowed, encrypts it, retries it, and records what happened.
 
 ## Prerequisites
-- Mac with Colima, kind, kubectl, helm, Docker.
-- A checkout of the TinyOlly repo (the demo targets its kind cluster `tinyolly`). It needs the platform changes that draw the mesh map (metric-derived edges, roles, posture). Build the shared `python-base` image before the UI image, with `DOCKER_CONTEXT=colima-tinyolly`: `docker build -t tinyolly/python-base:latest -f docker/dockerfiles/Dockerfile.tinyolly-python-base docker/`, then `k8s/04-rebuild+deploy-ui.sh`.
+- A Mac with Colima, kind, kubectl, helm and Docker (about 6 GiB for the Colima VM: 4 CPU / 6 GiB is enough).
+- A checkout of the [TinyOlly repo](https://github.com/tinyolly/tinyolly) (v3.0.0 or later). The demo runs on its kind cluster `tinyolly` and needs TinyOlly's mesh features (metric-derived edges, roles, posture). If you build TinyOlly from source, build the shared `python-base` image before the UI image, with `DOCKER_CONTEXT=colima-tinyolly`: `docker build -t tinyolly/python-base:latest -f docker/dockerfiles/Dockerfile.tinyolly-python-base docker/`, then `k8s/04-rebuild+deploy-ui.sh`.
+- Optional: an MCP client (Claude Code or Claude Desktop) for the AI prompts.
 
-## Run it
+## Setup
 ```bash
-# in the tinyolly repo
+# 1. In the tinyolly repo: start the cluster and TinyOlly
 ./scripts/colima-up.sh && ./scripts/kind-up.sh
 k8s/02-deploy-tinyolly.sh
 
-# in this repo
-./01-deploy-istio.sh        # Istio ambient (Helm) + the mesh-metrics collector
-./02-deploy-shop.sh         # Online Boutique in the mesh, ingress on :5001
+# 2. In this repo
+./01-deploy-istio.sh        # Istio ambient + the mesh-metrics collector
+./02-deploy-shop.sh         # Online Boutique in the mesh
 ./05-enable-tracing.sh      # app traces into TinyOlly
-./03-scenario.sh waypoint   # add L7; also: fault | retry | authz | probe | reset
-./04-cleanup.sh
 ```
-Open http://localhost:5005 → **APM Service Map**, and http://localhost:5001 (the shop). Versions are pinned in `versions.env`. `check_scenarios.py` validates the scenario manifests (needs PyYAML and the kind cluster).
 
-## Demo flow (~5 min)
-1. **Mesh, no sidecars:** "ztunnel does L4 mTLS for every pod." Show the map, built purely from ztunnel metrics.
-2. **Security posture:** point at the bar ("mTLS 92.5% · 3 plaintext"). Green edges are mTLS; orange dashed edges are plaintext, the zero-trust gap.
-3. **Add L7 only where needed:** `./03-scenario.sh waypoint`. The waypoint node appears and traces stitch through (ingress → frontend → waypoint → services).
-4. **Policy enforcement:** `./03-scenario.sh authz`, then `./03-scenario.sh probe` (about 2 minutes). A red edge appears from `intruder` to `cartservice` and the bar shows "1 denied", because only checkout may call `EmptyCart`.
-5. **Resilience (optional):** `fault` or `retry` shows errors and retries as latency and error rates on edges.
-6. **Toggle:** untick "Merge proxy and app nodes" for the layered mesh view.
+| Script | What it does |
+|---|---|
+| `01-deploy-istio.sh` | Installs the Gateway API CRDs and Istio ambient from Helm (base, istiod, CNI, ztunnel), then deploys `mesh-metrics.yaml`: a collector that scrapes ztunnel and waypoint metrics every 15 s and forwards them to TinyOlly |
+| `02-deploy-shop.sh` | Deploys Online Boutique into the `boutique` namespace, labelled `istio.io/dataplane-mode=ambient` (that one label joins the mesh: no restart, no injection), plus an ingress Gateway on port 5001. This is **L4 only**: no waypoint yet |
+| `05-enable-tracing.sh` | Turns on OpenTelemetry tracing in the Go services (frontend, checkout, product catalog, shipping), exporting to TinyOlly |
+| `03-scenario.sh <name>` | Applies one scenario from the demo guide below |
+| `04-cleanup.sh` | Removes the shop, waypoint, collector and Istio. Leaves the kind cluster and TinyOlly alone |
 
-Run `./03-scenario.sh reset` between rehearsals.
+**Open:** the shop at http://localhost:5001, TinyOlly at http://localhost:5005 → **APM Service Map**. A load generator keeps traffic flowing, so the map fills in within about a minute. Versions are pinned in `versions.env`.
+
+**Optional, for the AI prompts:** TinyOlly runs its MCP server as a pod next to the UI on `http://localhost:8765/mcp`.
+```bash
+claude mcp add --transport http tinyolly http://127.0.0.1:8765/mcp     # Claude Code
+```
+Claude Desktop connects through `mcp-remote`: see the [TinyOlly MCP docs](https://github.com/tinyolly/tinyolly/blob/main/docs/mcp.md).
+
+## Demo guide
+About 10 to 15 minutes. Each step says what to run, **what it does**, and what to **look at** in TinyOlly. `./03-scenario.sh reset` returns to the start between rehearsals.
+
+**How to read the map**
+- **Cards** are services. The small icon is the role: diamond = client (nothing calls it), rounded box = service, hexagon = external (it calls nothing), cut-corner box = waypoint or ztunnel, pentagon = gateway.
+- **Card stripe** is health: blue healthy, amber above 1% errors, red above 5%.
+- **Edges** are calls. Green solid = mTLS, orange dashed = plaintext, red = denied or failing. Thickness is volume.
+- **The bar above the map** summarizes posture: for example `mTLS 92.5% · 3 plaintext · 0 denied`.
+
+### Step 1: The mesh with no sidecars (L4 only)
+- **Run:** nothing yet. Open the map and let it fill in.
+- **What it does:** every pod is in the mesh because its namespace is labelled, but there is no proxy in the pods. A **ztunnel** on each node encrypts traffic with mTLS using each workload's identity, and exports connection-level metrics. TinyOlly turns those metrics into the map.
+- **Look at:** the whole map appears from metrics alone, with no traces (ztunnel produces none). Edges are green: mTLS for free. There are no request rates, latency or errors yet: that is the L4 limit.
+
+### Step 2: Security posture
+- **Run:** nothing. Read the bar and the orange dashed edges.
+- **What it does:** TinyOlly reads `connection_security_policy` on each connection. `mutual_tls` is green. Anything else is plaintext.
+- **Look at:** about 92% mTLS. The orange edges go to `tinyolly-otlp-receiver`: the apps export telemetry to a service outside the mesh. That is a real zero-trust gap, found without reading any config.
+
+### Step 3: Enforce mTLS
+- **Run:** `./03-scenario.sh outsider`, wait a minute, then `./03-scenario.sh strict`.
+- **What it does:** `outsider` starts a pod in a namespace that is not in the mesh and has it call `frontend` over plaintext. By default the mesh accepts that. `strict` applies a `PeerAuthentication` with mode STRICT, and ztunnel then refuses any connection that is not mTLS.
+- **Look at:** first an `outsider → frontend` orange plaintext edge. After `strict`, the edge turns red and the bar counts it as denied (ztunnel flags these `DENY`). The outsider's own log goes from `200` to `000`.
+- **Run this before any waypoint:** a workload behind a waypoint also refuses direct plaintext, so the "before" would fail too. Clear it with `./03-scenario.sh reset`.
+
+### Step 4: Layer 7 only where you need it
+- **Run:** `./03-scenario.sh waypoint-svc currencyservice`.
+- **What it does:** deploys a **waypoint** (an Envoy proxy) and attaches it to one Service. Only calls to `currencyservice` now go through it. Everything else stays L4.
+- **Look at:** the waypoint node appears. Only edges into `currencyservice` gain request-level metrics (rates, latency, response codes) and traces. The rest of the map is unchanged. This is "pay for L7 only where you need it".
+
+### Step 5: Layer 7 for the namespace
+- **Run:** `./03-scenario.sh waypoint`.
+- **What it does:** attaches the same waypoint to the whole `boutique` namespace.
+- **Look at:** every service-to-service call now has latency and status codes, and traces stitch through the waypoint (ingress → frontend → waypoint → services). Untick **Merge proxy and app nodes** to see the layered view of proxies and apps.
+
+### Step 6: Canary rollout
+- **Run:** `./03-scenario.sh canary`.
+- **What it does:** deploys `productcatalogservice` v2 (it adds 400 ms of latency) next to v1, then applies a Gateway API route that sends 90% of calls to v1 and 10% to v2. The waypoint does the splitting; no app changes.
+- **Look at:** after a minute, v1 gets about 90% of requests and v2 about 10%, and v2 has higher latency. Ask the AI for the version split (prompts below). A real rollout would use this to decide whether to shift more traffic.
+
+### Step 7: Authorization policy
+- **Run:** `./03-scenario.sh authz`, then `./03-scenario.sh probe` (it runs for about 2 minutes).
+- **What it does:** `authz` applies two policies: only `cartservice` may reach redis (L4, enforced by ztunnel), and only `checkoutservice` may call `EmptyCart` (L7, enforced by the waypoint). `probe` starts an `intruder` pod that calls `EmptyCart` repeatedly.
+- **Look at:** a red edge from `intruder` to `cartservice` and `1 denied` in the bar. gRPC reports a policy denial as HTTP 200 with `grpc-status 7`, so TinyOlly reads that status, not just the HTTP code. With the waypoint on, you may also see a small red `waypoint → redis-cart` edge: redis only trusts `cartservice`, and the policy correctly refuses the waypoint's identity.
+
+### Step 8: Resilience (optional)
+- **Run:** `./03-scenario.sh fault`, later `./03-scenario.sh retry`.
+- **What it does:** `fault` delays 50% of calls to `currencyservice` by 2 seconds. `retry` sets 3 attempts, a 2 s timeout per try and a 6 s overall timeout on `productcatalogservice`, for failed calls (5xx, resets, connect failures).
+- **Look at:** after `fault`, latency into `currencyservice` jumps on the map. Retries only show up when calls fail, so `retry` mostly shows the policy in place.
+
+### Reset
+`./03-scenario.sh reset` removes every scenario and the waypoint. `./04-cleanup.sh` removes the demo entirely.
+
+### Quick reference
+| Command | Effect |
+|---|---|
+| `./03-scenario.sh outsider` / `strict` | Plaintext client outside the mesh / require mTLS (run before any waypoint) |
+| `./03-scenario.sh waypoint-svc [service]` | L7 for one service only (default `productcatalogservice`) |
+| `./03-scenario.sh waypoint` | L7 for the whole namespace |
+| `./03-scenario.sh canary` | 90/10 split between v1 and a slower v2 |
+| `./03-scenario.sh authz` / `probe` | Deny policies / an intruder that trips them |
+| `./03-scenario.sh fault` / `retry` | Inject delay / retry failed calls |
+| `./03-scenario.sh reset` | Remove all scenarios |
+
+## Ask an AI about the mesh
+TinyOlly's MCP server lets an assistant query the same data. After setting it up (see [Setup](#setup)), try these. The tool or playbook behind each prompt is in parentheses.
+
+**Map and posture**
+- "Show me the service map and explain what each shape and color means." (`chart_service_map`)
+- "What is the mesh posture? How much traffic is mTLS and which edges are plaintext?" (`get_mesh_posture`)
+- "Which edges are plaintext, and why?" (`find_plaintext`)
+- "Draw the neighbourhood of the waypoint, two hops out." (`chart_service_map`)
+
+**Security**
+- "Is anything being denied? Who called what, and how many times?" (`find_denied`)
+- "Who is the intruder calling and which policy blocks it?" (`find_denied`, `get_edge`)
+- "Explain the edge from frontend to cartservice: counts, errors, latency and whether it is mTLS." (`get_edge`)
+
+**Rollouts and comparisons**
+- "Show me the traffic split for productcatalogservice. Is v2 slower than v1?" (`get_version_split`)
+- "Compare the last 5 minutes with the 5 minutes before: what changed in errors and latency for frontend?" (`compare_windows`)
+- "Did the fault scenario change anything? Which service got slower?" (`compare_windows`, `get_service_map`)
+
+**Latency, errors and traces**
+- "Group istio_requests_total by response code for traffic into cartservice." (`query_metric`)
+- "Find the slowest checkout trace. How much time was the mesh and how much was the app?" (`search_traces`, `get_trace_mesh`)
+- "Why is checkout slow? Follow the mesh investigation playbook." (`get_skill` → `tinyolly-mesh-investigation`)
+
+**Learning**
+- "What does ztunnel do, and how does TinyOlly build this map without traces?" (`search_docs`)
+- "List the investigation playbooks you have for this mesh." (`list_skills`)
+
+**A good five-minute demo with an AI:** run Step 7, then ask "Is anything being denied in the mesh?", then "Explain that edge", then "Chart the neighbourhood of cartservice". Three prompts take you from an alert to the cause and a picture.
 
 ## Metrics guide
 A collector (`mesh-metrics.yaml`) scrapes every ztunnel and waypoint pod every 15 seconds and sends the Istio metrics to TinyOlly over OTLP. TinyOlly draws the map and the mTLS / denied posture from them.
@@ -87,8 +200,8 @@ Metric types:
 
 Labels to look at:
 - **Who:** `source_workload`, `destination_workload` (and `_canonical_service`, namespaces).
-- **Encrypted?** `connection_security_policy`: `mutual_tls` means mTLS, anything else is plaintext.
-- **Outcome:** `response_code` (HTTP status), `grpc_response_status` (`7` = permission denied) and `response_flags` (Envoy's reason code).
+- **Encrypted?** `connection_security_policy`: `mutual_tls` means mTLS; `unknown` means no mTLS was seen (for example a destination outside the mesh), which TinyOlly shows as plaintext.
+- **Outcome:** `response_code` (HTTP status), `grpc_response_status` (`7` = permission denied) and `response_flags` (Envoy's reason code, `-` for none).
 
 | Question | Look at |
 |---|---|
@@ -100,9 +213,18 @@ Labels to look at:
 
 Without a waypoint you only get the TCP metrics. Add one with `./03-scenario.sh waypoint` to get request rates, errors and latency. Details and caveats: [docs/METRICS.md](docs/METRICS.md).
 
+## Troubleshooting
+- **The map is empty or sparse:** give it a minute for the first scrape (the collector scrapes every 15 s). Check the load generator and mesh pods are running: `kubectl get pods -A | grep -E "loadgenerator|ztunnel"`.
+- **Mesh features are missing in the UI (no posture bar, no roles):** the UI image is stale. Rebuild `python-base` first, then the UI image (see [Prerequisites](#prerequisites)).
+- **`outsider` and `strict` show nothing different:** a waypoint is active. Run `./03-scenario.sh reset` and repeat Step 3 before adding any waypoint.
+- **A scenario says the waypoint is missing:** run `./03-scenario.sh waypoint` or `waypoint-svc` first. `fault`, `retry`, `canary` and the L7 half of `authz` need it.
+- **MCP tools look old in Claude Desktop:** a per-client copy of the server is running old code. Point it at the pod with `mcp-remote` and restart the app.
+
 ## Docs
 - [`docs/PLAN.md`](docs/PLAN.md): demo plan and spike findings
 - [`docs/TINYOLLY-PLAN.md`](docs/TINYOLLY-PLAN.md): the TinyOlly product changes
 - [`docs/AMBIENT-NOTES.md`](docs/AMBIENT-NOTES.md): ambient notes and glossary
 - [`docs/METRICS.md`](docs/METRICS.md): mesh metrics guide
 - [`docs/DELEGATION.md`](docs/DELEGATION.md) and [`docs/tasks/`](docs/tasks/): Qwen delegation specs
+
+`check_scenarios.py` validates the scenario manifests (needs PyYAML and the kind cluster).
