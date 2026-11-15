@@ -6,6 +6,8 @@ What the demo collects, where it comes from, and how to read it in TinyOlly.
 `mesh-metrics.yaml` runs an OpenTelemetry collector that scrapes the Prometheus endpoint (`:15020`) of every **ztunnel** pod and every **waypoint** pod every 15 seconds. It keeps only `istio_tcp*`, `istio_requests*`, `istio_request_duration*`, `istio_request_bytes*` and `istio_response_bytes*`, and sends them over OTLP to TinyOlly's receiver. The waypoint also sends traces; ztunnel sends metrics only.
 
 ## The metrics
+Types: a **counter** only goes up (use its rate), a **gauge** goes up and down (read it as is), a **histogram** counts observations in buckets so you can compute percentiles such as p95.
+
 | Metric | Type | From | What it tells you |
 |---|---|---|---|
 | `istio_tcp_connections_opened_total` | counter | ztunnel, waypoint | Connections started between two workloads. The base of the L4 map. |

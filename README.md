@@ -71,14 +71,19 @@ Run `./03-scenario.sh reset` between rehearsals.
 ## Metrics guide
 A collector (`mesh-metrics.yaml`) scrapes every ztunnel and waypoint pod every 15 seconds and sends the Istio metrics to TinyOlly over OTLP. TinyOlly draws the map and the mTLS / denied posture from them.
 
-| Metric | From | What it tells you |
-|---|---|---|
-| `istio_tcp_connections_opened_total` / `_closed_total` / `_failed_total` | ztunnel, waypoint | Who connected to whom. The base of the map, available with no waypoint |
-| `istio_tcp_sent_bytes_total` / `istio_tcp_received_bytes_total` | ztunnel, waypoint | Bytes each way |
-| `istio_tcp_sockets_open` | ztunnel | Connections open right now |
-| `istio_requests_total` | waypoint | HTTP/gRPC requests by response code (errors, denials). Needs a waypoint |
-| `istio_request_duration_milliseconds` | waypoint | Request latency (p50 / p95 / p99) |
-| `istio_request_bytes` / `istio_response_bytes` | waypoint | Request and response sizes |
+Metric types:
+- **Counter:** a number that only goes up (resets on restart), such as total requests. Look at its rate of change, not the raw value.
+- **Gauge:** a value that goes up and down, such as connections open right now. Read it as it is.
+- **Histogram:** counts of observations in buckets (for example how many requests took under 10 ms, under 50 ms), which lets you compute percentiles like p95.
+
+| Metric | Type | From | What it tells you |
+|---|---|---|---|
+| `istio_tcp_connections_opened_total` / `_closed_total` / `_failed_total` | counter | ztunnel, waypoint | Who connected to whom. The base of the map, available with no waypoint |
+| `istio_tcp_sent_bytes_total` / `istio_tcp_received_bytes_total` | counter | ztunnel, waypoint | Bytes each way |
+| `istio_tcp_sockets_open` | gauge | ztunnel | Connections open right now |
+| `istio_requests_total` | counter | waypoint | HTTP/gRPC requests by response code (errors, denials). Needs a waypoint |
+| `istio_request_duration_milliseconds` | histogram | waypoint | Request latency (p50 / p95 / p99) |
+| `istio_request_bytes` / `istio_response_bytes` | histogram | waypoint | Request and response sizes |
 
 Labels to look at:
 - **Who:** `source_workload`, `destination_workload` (and `_canonical_service`, namespaces).
