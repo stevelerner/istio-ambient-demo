@@ -101,4 +101,8 @@ Labels to look at:
 Without a waypoint you only get the TCP metrics. Add one with `./03-scenario.sh waypoint` to get request rates, errors and latency. Details and caveats: [docs/METRICS.md](docs/METRICS.md).
 
 ## Docs
-`docs/PLAN.md` (demo plan and spike findings), `docs/TINYOLLY-PLAN.md` (the product changes), `docs/AMBIENT-NOTES.md` (ambient notes), `docs/METRICS.md` (mesh metrics guide), `docs/DELEGATION.md` and `docs/tasks/` (Qwen delegation specs).
+- [`docs/PLAN.md`](docs/PLAN.md): demo plan and spike findings
+- [`docs/TINYOLLY-PLAN.md`](docs/TINYOLLY-PLAN.md): the TinyOlly product changes
+- [`docs/AMBIENT-NOTES.md`](docs/AMBIENT-NOTES.md): ambient notes and glossary
+- [`docs/METRICS.md`](docs/METRICS.md): mesh metrics guide
+- [`docs/DELEGATION.md`](docs/DELEGATION.md) and [`docs/tasks/`](docs/tasks/): Qwen delegation specs
