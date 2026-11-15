@@ -3,22 +3,22 @@
 See Istio's sidecar-less "ambient" service mesh working on a Mac: encrypted traffic, policy enforcement and request-level detail, drawn live in [TinyOlly](https://github.com/tinyolly/tinyolly).
 
 ## Glossary
-- **Service mesh:** a layer that handles how services talk to each other (security, routing, retries, metrics) so app code doesn't have to.
+- **Ambient mode:** the newer Istio model with no sidecars. Proxies run per node or per namespace instead.
+- **Authorization policy:** a rule like "only checkout may call EmptyCart".
 - **Istio:** the most popular open-source service mesh. Runs on Kubernetes.
 - **Kubernetes:** the system that runs and manages containerized apps. A **pod** is one running instance of a service. A **node** is one machine (or VM) in the cluster.
-- **Proxy:** a small program that sits between two services and handles their traffic. **Envoy** is the proxy Istio uses.
-- **Sidecar:** the old Istio model, where an Envoy proxy runs inside every pod next to the app.
-- **Ambient mode:** the newer Istio model with no sidecars. Proxies run per node or per namespace instead.
-- **ztunnel:** ambient's small per-node proxy. It encrypts traffic and identifies workloads, but only at the connection level.
-- **Waypoint:** an optional Envoy proxy you add for a namespace or service when you need smarter, request-level features.
 - **L4 vs L7:** L4 is the connection level (who connects to whom, bytes). L7 is the request level (HTTP/gRPC paths, headers, status codes).
 - **mTLS (mutual TLS):** both sides prove their identity and the traffic is encrypted. "Mutual" means the server checks the client too.
-- **Zero trust:** don't trust traffic just because it's inside your network. Verify identity and permissions on every call.
-- **Authorization policy:** a rule like "only checkout may call EmptyCart".
-- **Retries, timeouts, fault injection:** automatically re-try failed calls, cap how long calls can take, and deliberately inject errors or delays to test resilience.
-- **Telemetry:** metrics, traces and logs that show what the system is doing. A **trace** is the recorded path of one request across services.
 - **OpenTelemetry (OTel):** the open standard for emitting telemetry.
+- **Proxy:** a small program that sits between two services and handles their traffic. **Envoy** is the proxy Istio uses.
+- **Retries, timeouts, fault injection:** automatically re-try failed calls, cap how long calls can take, and deliberately inject errors or delays to test resilience.
+- **Service mesh:** a layer that handles how services talk to each other (security, routing, retries, metrics) so app code doesn't have to.
+- **Sidecar:** the old Istio model, where an Envoy proxy runs inside every pod next to the app.
+- **Telemetry:** metrics, traces and logs that show what the system is doing. A **trace** is the recorded path of one request across services.
 - **TinyOlly:** a lightweight observability tool that receives OTel data and draws the service map.
+- **Waypoint:** an optional Envoy proxy you add for a namespace or service when you need smarter, request-level features.
+- **Zero trust:** don't trust traffic just because it's inside your network. Verify identity and permissions on every call.
+- **ztunnel:** ambient's small per-node proxy. It encrypts traffic and identifies workloads, but only at the connection level.
 
 ## Why ambient exists
 - **Problem with sidecars:** every pod carries its own proxy. That costs CPU and memory, adds delay, and makes upgrades awkward because pods must restart. It's also intrusive for app teams.
@@ -67,6 +67,33 @@ Open http://localhost:5005 → **APM Service Map**, and http://localhost:5001 (t
 6. **Toggle:** untick "Merge proxy and app nodes" for the layered mesh view.
 
 Run `./03-scenario.sh reset` between rehearsals.
+
+## Metrics guide
+A collector (`mesh-metrics.yaml`) scrapes every ztunnel and waypoint pod every 15 seconds and sends the Istio metrics to TinyOlly over OTLP. TinyOlly draws the map and the mTLS / denied posture from them.
+
+| Metric | From | What it tells you |
+|---|---|---|
+| `istio_tcp_connections_opened_total` / `_closed_total` / `_failed_total` | ztunnel, waypoint | Who connected to whom. The base of the map, available with no waypoint |
+| `istio_tcp_sent_bytes_total` / `istio_tcp_received_bytes_total` | ztunnel, waypoint | Bytes each way |
+| `istio_tcp_sockets_open` | ztunnel | Connections open right now |
+| `istio_requests_total` | waypoint | HTTP/gRPC requests by response code (errors, denials). Needs a waypoint |
+| `istio_request_duration_milliseconds` | waypoint | Request latency (p50 / p95 / p99) |
+| `istio_request_bytes` / `istio_response_bytes` | waypoint | Request and response sizes |
+
+Labels to look at:
+- **Who:** `source_workload`, `destination_workload` (and `_canonical_service`, namespaces).
+- **Encrypted?** `connection_security_policy`: `mutual_tls` means mTLS, anything else is plaintext.
+- **Outcome:** `response_code` (HTTP status), `grpc_response_status` (`7` = permission denied) and `response_flags` (Envoy's reason code).
+
+| Question | Look at |
+|---|---|
+| Who talks to whom? | TCP connections by source and destination workload |
+| Is everything encrypted? | `connection_security_policy` (TinyOlly's posture bar shows the percentage) |
+| What is being denied? | `istio_requests_total` with `response_code=403` or `grpc_response_status=7` (red edges) |
+| Is a service slow? | `istio_request_duration_milliseconds` p95 by destination |
+| Did a scenario change anything? | Compare p95 and error rate before and after `./03-scenario.sh` |
+
+Without a waypoint you only get the TCP metrics. Add one with `./03-scenario.sh waypoint` to get request rates, errors and latency. Details and caveats: [docs/METRICS.md](docs/METRICS.md).
 
 ## Docs
 `docs/PLAN.md` (demo plan and spike findings), `docs/TINYOLLY-PLAN.md` (the product changes), `docs/AMBIENT-NOTES.md` (ambient notes), `docs/METRICS.md` (mesh metrics guide), `docs/DELEGATION.md` and `docs/tasks/` (Qwen delegation specs).
