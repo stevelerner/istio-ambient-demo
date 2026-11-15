@@ -43,3 +43,6 @@ In TinyOlly, the map and the posture bar already do the first three for you. The
 - Denied detection from metrics is a heuristic: HTTP 403, gRPC status 7, or a waypoint's own reply that has no destination. A trace or log confirms the exact call.
 - gRPC errors arrive as HTTP 200 with a non-zero `grpc_response_status`, so check that label, not just `response_code`.
 - Only the metrics above are forwarded. Envoy's other stats (`envoy_*`) and ztunnel's internal ones are filtered out to keep volume low.
+- Response flags worth knowing: `DI` is a delay injected by a fault rule, `UT` is an upstream timeout, `UH` is no healthy upstream, `DENY` on `istio_tcp_connections_failed_total` is a connection refused by policy (for example STRICT mTLS).
+- ztunnel counters count from when ztunnel started, so TinyOlly shows earlier denied and plaintext history until ztunnel is restarted and TinyOlly's telemetry is cleared (`./03-scenario.sh fresh` does both).
+- Denied detection can count a rare waypoint local reply (for example during a timeout) as a denial; a count of 1 on an unrelated edge is usually that.

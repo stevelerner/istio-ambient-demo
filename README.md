@@ -74,10 +74,12 @@ k8s/02-deploy-tinyolly.sh
 | Script | What it does |
 |---|---|
 | `01-deploy-istio.sh` | Installs the Gateway API CRDs and Istio ambient from Helm (base, istiod, CNI, ztunnel), then deploys `mesh-metrics.yaml`: a collector that scrapes ztunnel and waypoint metrics every 15 s and forwards them to TinyOlly |
-| `02-deploy-shop.sh` | Deploys Online Boutique into the `boutique` namespace, labelled `istio.io/dataplane-mode=ambient` (that one label joins the mesh: no restart, no injection), plus an ingress Gateway on port 5001. This is **L4 only**: no waypoint yet |
+| `02-deploy-shop.sh` | Deploys Online Boutique into the `boutique` namespace, labelled `istio.io/dataplane-mode=ambient` (that one label joins the mesh: no restart, no injection), plus an ingress Gateway on port 5001. It raises the memory limit of `cartservice` and `currencyservice` to 256Mi and lowers every pod's CPU request to 50m so the whole demo fits a 4-CPU kind node. This is **L4 only**: no waypoint yet |
 | `05-enable-tracing.sh` | Turns on OpenTelemetry tracing in the Go services (frontend, checkout, product catalog, shipping), exporting to TinyOlly |
 | `03-scenario.sh <name>` | Applies one scenario from the demo guide below |
-| `04-cleanup.sh` | Removes the shop, waypoint, collector and Istio. Leaves the kind cluster and TinyOlly alone |
+| `04-cleanup.sh` | Removes the shop, waypoint, collector and Istio, and clears TinyOlly's stored telemetry. Leaves the kind cluster and TinyOlly itself in place |
+
+**Clean start (before every run):** `./03-scenario.sh fresh` removes any scenario, restarts ztunnel (its counters count from when it started, so old denied and plaintext history would otherwise reappear) and clears TinyOlly's stored telemetry. The map refills in about 1 to 2 minutes.
 
 **Open:** the shop at http://localhost:5001, TinyOlly at http://localhost:5005 → **APM Service Map**. A load generator keeps traffic flowing, so the map fills in within about a minute. Versions are pinned in `versions.env`.
 
@@ -88,7 +90,7 @@ claude mcp add --transport http tinyolly http://127.0.0.1:8765/mcp     # Claude 
 Claude Desktop connects through `mcp-remote`: see the [TinyOlly MCP docs](https://github.com/tinyolly/tinyolly/blob/main/docs/mcp.md).
 
 ## Demo guide
-About 10 to 15 minutes. Each step says what to run, **what it does**, and what to **look at** in TinyOlly. `./03-scenario.sh reset` returns to the start between rehearsals.
+About 15 minutes. Each step says what to run, **what it does**, and what to **look at** in TinyOlly. Run `./03-scenario.sh fresh` first, and again between rehearsals.
 
 **How to read the map**
 - **Cards** are services. The small icon is the role: diamond = client (nothing calls it), rounded box = service, hexagon = external (it calls nothing), cut-corner box = waypoint or ztunnel, pentagon = gateway.
@@ -104,17 +106,17 @@ About 10 to 15 minutes. Each step says what to run, **what it does**, and what t
 ### Step 2: Security posture
 - **Run:** nothing. Read the bar and the orange dashed edges.
 - **What it does:** TinyOlly reads `connection_security_policy` on each connection. `mutual_tls` is green. Anything else is plaintext.
-- **Look at:** about 92% mTLS. The orange edges go to `tinyolly-otlp-receiver`: the apps export telemetry to a service outside the mesh. That is a real zero-trust gap, found without reading any config.
+- **Look at:** roughly 80 to 92% mTLS (it rises as more of the map fills in). The orange edges go to `tinyolly-otlp-receiver`: the apps export telemetry to a service outside the mesh. That is a real zero-trust gap, found without reading any config.
 
 ### Step 3: Enforce mTLS
 - **Run:** `./03-scenario.sh outsider`, wait a minute, then `./03-scenario.sh strict`.
 - **What it does:** `outsider` starts a pod in a namespace that is not in the mesh and has it call `frontend` over plaintext. By default the mesh accepts that. `strict` applies a `PeerAuthentication` with mode STRICT, and ztunnel then refuses any connection that is not mTLS.
-- **Look at:** first an `outsider → frontend` orange plaintext edge. After `strict`, the edge turns red and the bar counts it as denied (ztunnel flags these `DENY`). The outsider's own log goes from `200` to `000`.
-- **Run this before any waypoint:** a workload behind a waypoint also refuses direct plaintext, so the "before" would fail too. Clear it with `./03-scenario.sh reset`.
+- **Look at:** first an `outsider → frontend` orange plaintext edge, and the outsider's own log (`kubectl -n outside logs outsider`) shows `200`. After `strict`, the edge turns red, the bar counts it as denied (ztunnel flags these `DENY`), and the log shows `000` (refused).
+- **Run this before any waypoint:** a workload behind a waypoint also refuses direct plaintext, so the "before" would fail too. Clear it with `./03-scenario.sh fresh` (a plain `reset` leaves the old outsider edge on the map).
 
 ### Step 4: Layer 7 only where you need it
 - **Run:** `./03-scenario.sh waypoint-svc currencyservice`.
-- **What it does:** deploys a **waypoint** (an Envoy proxy) and attaches it to one Service. Only calls to `currencyservice` now go through it. Everything else stays L4.
+- **What it does:** deploys a **waypoint** (an Envoy proxy) and attaches it to one Service. Only calls to `currencyservice` now go through it. Everything else stays L4. The script then deletes the caller pods (frontend, checkout, recommendation) so they restart: their long-lived gRPC connections keep the path they were opened on, so without that the waypoint would see no traffic. The shop is briefly unavailable (about 30 seconds). Pods are deleted rather than rolled because a rolling restart needs spare CPU for the replacement pod.
 - **Look at:** the waypoint node appears. Only edges into `currencyservice` gain request-level metrics (rates, latency, response codes) and traces. The rest of the map is unchanged. This is "pay for L7 only where you need it".
 
 ### Step 5: Layer 7 for the namespace
@@ -125,20 +127,23 @@ About 10 to 15 minutes. Each step says what to run, **what it does**, and what t
 ### Step 6: Canary rollout
 - **Run:** `./03-scenario.sh canary`.
 - **What it does:** deploys `productcatalogservice` v2 (it adds 400 ms of latency) next to v1, then applies a Gateway API route that sends 90% of calls to v1 and 10% to v2. The waypoint does the splitting; no app changes.
-- **Look at:** after a minute, v1 gets about 90% of requests and v2 about 10%, and v2 has higher latency. Ask the AI for the version split (prompts below). A real rollout would use this to decide whether to shift more traffic.
+- **Look at:** after a minute or two, v1 gets about 90% of requests and v2 about 10%. v1 averages well under a millisecond and v2 about 400 ms. The MCP tool `get_version_split` reports share, errors and average latency per version (prompts below). A real rollout would use this to decide whether to shift more traffic.
 
 ### Step 7: Authorization policy
 - **Run:** `./03-scenario.sh authz`, then `./03-scenario.sh probe` (it runs for about 2 minutes).
-- **What it does:** `authz` applies two policies: only `cartservice` may reach redis (L4, enforced by ztunnel), and only `checkoutservice` may call `EmptyCart` (L7, enforced by the waypoint). `probe` starts an `intruder` pod that calls `EmptyCart` repeatedly.
-- **Look at:** a red edge from `intruder` to `cartservice` and `1 denied` in the bar. gRPC reports a policy denial as HTTP 200 with `grpc-status 7`, so TinyOlly reads that status, not just the HTTP code. With the waypoint on, you may also see a small red `waypoint → redis-cart` edge: redis only trusts `cartservice`, and the policy correctly refuses the waypoint's identity.
+- **What it does:** `authz` applies two policies: only `cartservice` may reach redis (L4, enforced by ztunnel), and only `checkoutservice` may call `EmptyCart` on port 7070 (L7, enforced by the waypoint). `probe` starts an `intruder` pod that calls `EmptyCart` repeatedly.
+- **Look at:** a red edge from `intruder` to `cartservice` and `1 denied` in the bar (the count grows while the probe runs). gRPC reports a policy denial as HTTP 200 with `grpc-status 7`, so TinyOlly reads that status, not just the HTTP code. With the waypoint on, you may also see a small red `waypoint → redis-cart` edge: redis only trusts `cartservice`, and the policy correctly refuses the waypoint's identity.
 
 ### Step 8: Resilience (optional)
-- **Run:** `./03-scenario.sh fault`, later `./03-scenario.sh retry`.
-- **What it does:** `fault` delays 50% of calls to `currencyservice` by 2 seconds. `retry` sets 3 attempts, a 2 s timeout per try and a 6 s overall timeout on `productcatalogservice`, for failed calls (5xx, resets, connect failures).
-- **Look at:** after `fault`, latency into `currencyservice` jumps on the map. Retries only show up when calls fail, so `retry` mostly shows the policy in place.
+- **Run:** `./03-scenario.sh fault`, then (after `canary`) `./03-scenario.sh timeout`, and `./03-scenario.sh retry`.
+- **What they do:**
+  - `fault` delays 50% of calls to `currencyservice` by 2 seconds. The mesh injects the delay, so the shop itself gets slow (the home page takes several seconds): that is the effect.
+  - `timeout` adds a 200 ms request timeout to the canary route. The slow v2 (400 ms) is now cut off while v1 is unaffected. Run it after `canary`. (A route timeout does not cut off a delay injected by `fault`, which is why it targets the canary.)
+  - `retry` sets 3 attempts, a 2 s timeout per try and a 6 s overall timeout on `productcatalogservice`, for failed calls (5xx, resets, connect failures). It does not retry timeouts.
+- **Look at:** after `fault`, average latency into `currencyservice` jumps from about a millisecond to about 900 ms. After `timeout`, calls to v2 fail (response flag `UT`) and errors appear on the edges into `productcatalogservice`. Retries only show up when calls fail in a retryable way, so `retry` mostly shows the policy in place.
 
 ### Reset
-`./03-scenario.sh reset` removes every scenario and the waypoint. `./04-cleanup.sh` removes the demo entirely.
+`./03-scenario.sh reset` removes every scenario and the waypoint; `./03-scenario.sh fresh` also clears the history. `./04-cleanup.sh` removes the demo entirely.
 
 ### Quick reference
 | Command | Effect |
@@ -149,7 +154,8 @@ About 10 to 15 minutes. Each step says what to run, **what it does**, and what t
 | `./03-scenario.sh canary` | 90/10 split between v1 and a slower v2 |
 | `./03-scenario.sh authz` / `probe` | Deny policies / an intruder that trips them |
 | `./03-scenario.sh fault` / `retry` | Inject delay / retry failed calls |
-| `./03-scenario.sh reset` | Remove all scenarios |
+| `./03-scenario.sh timeout` | Cut off the slow canary v2 at 200 ms (run after `canary`) |
+| `./03-scenario.sh reset` / `fresh` | Remove all scenarios / also zero ztunnel's counters and clear TinyOlly's history |
 
 ## Ask an AI about the mesh
 TinyOlly's MCP server lets an assistant query the same data. After setting it up (see [Setup](#setup)), try these. The tool or playbook behind each prompt is in parentheses.
@@ -166,7 +172,7 @@ TinyOlly's MCP server lets an assistant query the same data. After setting it up
 - "Explain the edge from frontend to cartservice: counts, errors, latency and whether it is mTLS." (`get_edge`)
 
 **Rollouts and comparisons**
-- "Show me the traffic split for productcatalogservice. Is v2 slower than v1?" (`get_version_split`)
+- "Show me the traffic split for productcatalogservice. How much slower is v2 than v1?" (`get_version_split`)
 - "Compare the last 5 minutes with the 5 minutes before: what changed in errors and latency for frontend?" (`compare_windows`)
 - "Did the fault scenario change anything? Which service got slower?" (`compare_windows`, `get_service_map`)
 
@@ -216,15 +222,18 @@ Without a waypoint you only get the TCP metrics. Add one with `./03-scenario.sh 
 ## Troubleshooting
 - **The map is empty or sparse:** give it a minute for the first scrape (the collector scrapes every 15 s). Check the load generator and mesh pods are running: `kubectl get pods -A | grep -E "loadgenerator|ztunnel"`.
 - **Mesh features are missing in the UI (no posture bar, no roles):** the UI image is stale. Rebuild `python-base` first, then the UI image (see [Prerequisites](#prerequisites)).
+- **Pods stay `Pending` with `Insufficient cpu`:** the kind node has 4 CPUs. `02-deploy-shop.sh` lowers the shop's CPU requests to make room; if you added workloads, free some CPU or give Colima more (`COLIMA_CPU`).
+- **The shop returns 500 or pages hang:** check `kubectl -n boutique get pods` for a restarting pod. `cartservice` and `currencyservice` are given 256Mi by `02-deploy-shop.sh` (the default 128Mi runs out under sustained load).
+- **Denied or plaintext edges from an earlier run are still on the map:** run `./03-scenario.sh fresh`. ztunnel's counters count from when it started, so a plain `reset` keeps the history.
+- **A waypoint is on but the map shows no L7 data:** callers must reconnect to use it. The scenarios restart them for you; if you attached a waypoint by hand, restart the callers.
 - **`outsider` and `strict` show nothing different:** a waypoint is active. Run `./03-scenario.sh reset` and repeat Step 3 before adding any waypoint.
 - **A scenario says the waypoint is missing:** run `./03-scenario.sh waypoint` or `waypoint-svc` first. `fault`, `retry`, `canary` and the L7 half of `authz` need it.
 - **MCP tools look old in Claude Desktop:** a per-client copy of the server is running old code. Point it at the pod with `mcp-remote` and restart the app.
 
 ## Docs
 - [`docs/PLAN.md`](docs/PLAN.md): demo plan and spike findings
-- [`docs/TINYOLLY-PLAN.md`](docs/TINYOLLY-PLAN.md): the TinyOlly product changes
 - [`docs/AMBIENT-NOTES.md`](docs/AMBIENT-NOTES.md): ambient notes and glossary
 - [`docs/METRICS.md`](docs/METRICS.md): mesh metrics guide
-- [`docs/DELEGATION.md`](docs/DELEGATION.md) and [`docs/tasks/`](docs/tasks/): Qwen delegation specs
+- [`docs/DELEGATION.md`](docs/DELEGATION.md): how this repo uses local Qwen for mechanical work
 
 `check_scenarios.py` validates the scenario manifests (needs PyYAML and the kind cluster).

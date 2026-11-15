@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Acceptance check for the Istio scenarios: field checks plus a server-side dry-run against the kind cluster."""
-import subprocess, sys
+import os
+import subprocess
+import sys
+
 import yaml
 
 errors = []
-import os
-D = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scenarios") + "/"
+HERE = os.path.dirname(os.path.abspath(__file__))
+SCENARIO_SH = os.path.join(HERE, "03-scenario.sh")
+D = os.path.join(HERE, "scenarios") + "/"
 
 
 def load(name):
@@ -75,6 +79,13 @@ eq("authz-l7 notPrincipals", dig(d, "spec", "rules", 0, "from", 0, "source", "no
    ["cluster.local/ns/boutique/sa/checkoutservice"])
 eq("authz-l7 paths", dig(d, "spec", "rules", 0, "to", 0, "operation", "paths"), ["/hipstershop.CartService/EmptyCart"])
 
+d = single("timeout.yaml", "HTTPRoute", "gateway.networking.k8s.io/v1")
+eq("timeout name", dig(d, "metadata", "name"), "productcatalog-canary")   # same object as canary.yaml: applying it upgrades the canary
+eq("timeout parent", dig(d, "spec", "parentRefs", 0, "name"), "productcatalogservice")
+eq("timeout weights", [(b["name"], b["weight"]) for b in dig(d, "spec", "rules", 0, "backendRefs") or []],
+   [("productcatalogservice-v1", 90), ("productcatalogservice-v2", 10)])
+eq("timeout request timeout", dig(d, "spec", "rules", 0, "timeouts", "request"), "200ms")
+
 docs = load("canary.yaml")
 kinds = [(x.get("kind"), dig(x, "metadata", "name")) for x in docs]
 eq("canary documents", kinds, [("Deployment", "productcatalogservice-v2"), ("Service", "productcatalogservice-v1"),
@@ -89,17 +100,17 @@ d = single("strict-mtls.yaml", "PeerAuthentication", "security.istio.io/v1")
 eq("strict-mtls name", dig(d, "metadata", "name"), "strict-mtls")
 eq("strict-mtls mode", dig(d, "spec", "mtls", "mode"), "STRICT")
 
-sh = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "03-scenario.sh")).read()
-if subprocess.run(["bash", "-n", os.path.join(os.path.dirname(os.path.abspath(__file__)), "03-scenario.sh")]).returncode:
+sh = open(SCENARIO_SH).read()
+if subprocess.run(["bash", "-n", SCENARIO_SH]).returncode:
     errors.append("03-scenario.sh has a syntax error")
-for word in ["waypoint", "waypoint-svc", "fault", "retry", "canary", "outsider", "strict", "authz", "reset", "require_kind_context", "kubectl apply", "kubectl delete"]:
+for word in ["waypoint", "waypoint-svc", "fault", "retry", "canary", "timeout", "outsider", "strict", "authz", "reset", "require_kind_context", "kubectl apply", "kubectl delete"]:
     if word not in sh:
         errors.append(f"03-scenario.sh does not mention {word!r}")
-out = subprocess.run(["bash", os.path.join(os.path.dirname(os.path.abspath(__file__)), "03-scenario.sh")], capture_output=True, text=True)
+out = subprocess.run(["bash", SCENARIO_SH], capture_output=True, text=True)
 if out.returncode == 0 or "waypoint" not in out.stdout + out.stderr:
     errors.append("running 03-scenario.sh with no argument must print usage naming the scenarios and exit non-zero")
 
-for f in ["fault", "retry", "authz-l4", "authz-l7", "canary", "strict-mtls"]:
+for f in ["fault", "retry", "authz-l4", "authz-l7", "canary", "timeout", "strict-mtls"]:
     r = subprocess.run(["kubectl", "apply", "--dry-run=server", "-f", D + f + ".yaml"], capture_output=True, text=True)
     if r.returncode:
         errors.append(f"{f}.yaml rejected by the cluster: {r.stderr.strip()[:200]}")

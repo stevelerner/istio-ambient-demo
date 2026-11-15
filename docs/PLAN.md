@@ -1,9 +1,9 @@
 # Plan: Istio ambient demo for TinyOlly ("how to visualize a service mesh")
 
-Date: 2026-11-14. Status: draft for review, nothing built. Decision (owner): ambient mode, no Envoy sidecars.
+Date: 2026-11-14. Status: built (phases 0 to 3); phases 4 and 5 are open ideas. Decision (owner): ambient mode, no Envoy sidecars.
 
 ## Goal
-**Two deliverables:** the demo (this file) and the TinyOlly changes that let it observe meshes, gateways and proxies (`TINYOLLY-PLAN.md`). The second is the real differentiator.
+**Two deliverables:** the demo (this repo) and the TinyOlly changes that let it observe meshes (shipped in TinyOlly v3.0, see its `docs/istio.md`).
 
 One-command demo on a Mac: kind on Colima, Istio ambient, a shopping app, an OTel collector, TinyOlly as the only UI. The story: what the mesh gives you **with no sidecars and no app changes** (L4 metrics, mTLS), then what turns on when you add a **waypoint** (L7 traces, logs, metrics, traffic policy), with scripted scenarios whose effects show up in TinyOlly.
 
@@ -55,7 +55,6 @@ Numbered scripts, `kubectx.sh` guard so nothing touches a non-kind cluster, vers
 6. **Image arch:** confirm all Boutique images run on arm64.
 
 ## Phases (each ends with something you can look at)
-Run the TinyOlly work (`TINYOLLY-PLAN.md`, T0 to T6) alongside these: the spike feeds T0 fixtures, and each demo phase is the proving ground for a TinyOlly phase.
 0. **Spike (half day):** kind + ambient Istio + Boutique + TinyOlly core on the Colima VM. See ztunnel metrics, then add a waypoint and see spans and logs. Settle risks 1-4. Output: findings added to this file.
 1. **Core demo:** this repo (repo root) with `01-deploy-istio.sh`, `02-deploy-shop.sh`, `04-cleanup.sh`, `mesh-metrics` collector, Telemetry config, `versions.env` pins.
 2. **Scenarios:** `03-scenario.sh` with the scenarios above, each verified in the UI.

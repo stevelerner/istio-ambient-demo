@@ -16,5 +16,7 @@ spec:
         - cluster.local/ns/boutique/sa/checkoutservice
     to:
     - operation:
+        ports:
+        - "7070"
         paths:
         - /hipstershop.CartService/EmptyCart

@@ -1,0 +1,23 @@
+# Applying this upgrades the canary HTTPRoute in place (same name as canary.yaml), so run it after `canary`.
+# A 200ms request timeout cuts off the slow v2 (400ms) while v1 is unaffected.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: productcatalog-canary
+  namespace: boutique
+spec:
+  parentRefs:
+  - group: ""
+    kind: Service
+    name: productcatalogservice
+    port: 3550
+  rules:
+  - backendRefs:
+    - name: productcatalogservice-v1
+      port: 3550
+      weight: 90
+    - name: productcatalogservice-v2
+      port: 3550
+      weight: 10
+    timeouts:
+      request: 200ms

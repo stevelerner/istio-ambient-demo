@@ -34,6 +34,7 @@ Ambient is Istio without sidecars. The mesh is split in two layers you adopt sep
 - ztunnel is shared per node (blast radius, noisy neighbours), unlike per-pod sidecars.
 - Newer than sidecars: check feature parity and the CNI/kernel requirements for the target platform.
 - L4 telemetry only without a waypoint: **no traces**. (This is exactly what the TinyOlly demo shows.)
+- A connection keeps the path it was opened on, so after attaching a waypoint, long-lived gRPC clients must reconnect before the waypoint sees their traffic.
 
 ## Demo mapping
 | Talking point | Where it shows in the demo |
@@ -43,6 +44,6 @@ Ambient is Istio without sidecars. The mesh is split in two layers you adopt sep
 | Policy you can verify | `authz` + `probe` scenarios: a red denied edge, `find_denied` in MCP |
 | Enforced mTLS | `outsider` then `strict` scenarios: a plaintext call from outside the mesh works, then is refused |
 | Pay for L7 only where needed | `waypoint-svc <service>`: one service gets request metrics and traces, the rest stay L4 |
-| Safe rollouts | `canary` scenario: 90/10 split between v1 and a slower v2, visible per version in TinyOlly |
+| Safe rollouts | `canary` scenario: 90/10 split between v1 and a slower v2, with traffic share and average latency per version in TinyOlly; `timeout` then cuts off the slow v2 |
 | Resilience | `fault` and `retry` scenarios |
 | Ingress | Istio Gateway API (`ingress.yaml`) in front of the shop on port 5001 |
