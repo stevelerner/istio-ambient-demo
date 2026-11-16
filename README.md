@@ -135,12 +135,19 @@ About 15 minutes. Each step says what to run, **what it does**, and what to **lo
 - **Look at:** a red edge from `intruder` to `cartservice` and `1 denied` in the bar (the count grows while the probe runs). gRPC reports a policy denial as HTTP 200 with `grpc-status 7`, so TinyOlly reads that status, not just the HTTP code. With the waypoint on, you may also see a small red `waypoint → redis-cart` edge: redis only trusts `cartservice`, and the policy correctly refuses the waypoint's identity.
 
 ### Step 8: Resilience (optional)
-- **Run:** `./03-scenario.sh fault`, then (after `canary`) `./03-scenario.sh timeout`, and `./03-scenario.sh retry`.
+- **Run:** `./03-scenario.sh fault`, then (after `canary`) `./03-scenario.sh timeout`, and finally `./03-scenario.sh flaky` followed by `./03-scenario.sh retry`.
 - **What they do:**
   - `fault` delays 50% of calls to `currencyservice` by 2 seconds. The mesh injects the delay, so the shop itself gets slow (the home page takes several seconds): that is the effect.
   - `timeout` adds a 200 ms request timeout to the canary route. The slow v2 (400 ms) is now cut off while v1 is unaffected. Run it after `canary`. (A route timeout does not cut off a delay injected by `fault`, which is why it targets the canary.)
+  - `flaky` adds a pod that carries the `productcatalogservice` label but never listens on its port, so about half the calls to that service fail. It removes the `canary` route first, because that route bypasses the pod.
   - `retry` sets 3 attempts, a 2 s timeout per try and a 6 s overall timeout on `productcatalogservice`, for failed calls (5xx, resets, connect failures). It does not retry timeouts.
-- **Look at:** after `fault`, average latency into `currencyservice` jumps from about a millisecond to about 900 ms. After `timeout`, calls to v2 fail (response flag `UT`) and errors appear on the edges into `productcatalogservice`. Retries only show up when calls fail in a retryable way, so `retry` mostly shows the policy in place.
+- **Look at:** after `fault`, average latency into `currencyservice` jumps from about a millisecond to about 900 ms. After `timeout`, calls to v2 fail (response flag `UT`) and errors appear on the edges into `productcatalogservice`. After `flaky`, about half the calls into `productcatalogservice` fail with response flag `UC` and the shop returns errors. After `retry`, a failed attempt goes to another endpoint: the flag disappears and every request succeeds. The mesh metrics report only the final result, so the proof of a retry is that the failures vanish.
+
+### Step 9: Let an AI investigate (optional)
+- **Run:** with the waypoint on (`./03-scenario.sh waypoint`), apply `./03-scenario.sh flaky` and wait about a minute. Then ask your assistant: "Something is wrong with the shop. Investigate and tell me which service and why."
+- **What it does:** `03-scenario.sh` records a change marker in TinyOlly each time it applies something. The assistant calls `what_changed` (the marker and what happened to failures after it), then `get_edge` (the edge carries response flag `UC`, with its meaning and a next step), and can draw `chart_map_diff` (red edges got more failures).
+- **Look at:** the answer should name `productcatalogservice`, say about half the calls fail because the upstream closes the connection, and point at the pod that is Ready but not listening. Now run `./03-scenario.sh retry`: ask again and the failures are gone.
+- **Why it matters:** the same fault, injected the same way, is what TinyOlly's agent eval (`scripts/agent_eval/` in the TinyOlly repo) scores local models against.
 
 ### Reset
 `./03-scenario.sh reset` removes every scenario and the waypoint; `./03-scenario.sh fresh` also clears the history. `./04-cleanup.sh` removes the demo entirely.
@@ -153,7 +160,7 @@ About 15 minutes. Each step says what to run, **what it does**, and what to **lo
 | `./03-scenario.sh waypoint` | L7 for the whole namespace |
 | `./03-scenario.sh canary` | 90/10 split between v1 and a slower v2 |
 | `./03-scenario.sh authz` / `probe` | Deny policies / an intruder that trips them |
-| `./03-scenario.sh fault` / `retry` | Inject delay / retry failed calls |
+| `./03-scenario.sh fault` / `flaky` / `retry` | Inject delay / break half the calls / retry failed calls |
 | `./03-scenario.sh timeout` | Cut off the slow canary v2 at 200 ms (run after `canary`) |
 | `./03-scenario.sh reset` / `fresh` | Remove all scenarios / also zero ztunnel's counters and clear TinyOlly's history |
 
@@ -171,14 +178,21 @@ TinyOlly's MCP server lets an assistant query the same data. After setting it up
 - "Who is the intruder calling and which policy blocks it?" (`find_denied`, `get_edge`)
 - "Explain the edge from frontend to cartservice: counts, errors, latency and whether it is mTLS." (`get_edge`)
 
+**Lock it down**
+- "Draft a least-privilege policy for cartservice from the callers you actually see. Which callers would it block?" (`suggest_authz`)
+- "Which edges only have connection counts, and where would a waypoint add the most?" (`get_mesh_posture`: L7 coverage and L4-only edges)
+
 **Rollouts and comparisons**
 - "Show me the traffic split for productcatalogservice. How much slower is v2 than v1?" (`get_version_split`)
 - "Compare the last 5 minutes with the 5 minutes before: what changed in errors and latency for frontend?" (`compare_windows`)
 - "Did the fault scenario change anything? Which service got slower?" (`compare_windows`, `get_service_map`)
+- "What changed around the last scenario I applied?" (`what_changed`: `03-scenario.sh` records a change marker each time)
+- "Show me on the map what the flaky scenario broke." (`chart_map_diff`: red edges got more failures)
 
 **Latency, errors and traces**
 - "Group istio_requests_total by response code for traffic into cartservice." (`query_metric`)
 - "Find the slowest checkout trace. How much time was the mesh and how much was the app?" (`search_traces`, `get_trace_mesh`)
+- "Draw the journey of that trace over the map. How much of the time was spent in the mesh?" (`chart_trace_path`)
 - "Why is checkout slow? Follow the mesh investigation playbook." (`get_skill` → `tinyolly-mesh-investigation`)
 
 **Learning**
@@ -227,7 +241,7 @@ Without a waypoint you only get the TCP metrics. Add one with `./03-scenario.sh 
 - **Denied or plaintext edges from an earlier run are still on the map:** run `./03-scenario.sh fresh`. ztunnel's counters count from when it started, so a plain `reset` keeps the history.
 - **A waypoint is on but the map shows no L7 data:** callers must reconnect to use it. The scenarios restart them for you; if you attached a waypoint by hand, restart the callers.
 - **`outsider` and `strict` show nothing different:** a waypoint is active. Run `./03-scenario.sh reset` and repeat Step 3 before adding any waypoint.
-- **A scenario says the waypoint is missing:** run `./03-scenario.sh waypoint` or `waypoint-svc` first. `fault`, `retry`, `canary` and the L7 half of `authz` need it.
+- **A scenario says the waypoint is missing:** run `./03-scenario.sh waypoint` or `waypoint-svc` first. `fault`, `flaky`, `retry`, `canary` and the L7 half of `authz` need it.
 - **MCP tools look old in Claude Desktop:** a per-client copy of the server is running old code. Point it at the pod with `mcp-remote` and restart the app.
 
 ## Docs
@@ -236,4 +250,4 @@ Without a waypoint you only get the TCP metrics. Add one with `./03-scenario.sh 
 - [`docs/METRICS.md`](docs/METRICS.md): mesh metrics guide
 - [`docs/DELEGATION.md`](docs/DELEGATION.md): how this repo uses local Qwen for mechanical work
 
-`check_scenarios.py` validates the scenario manifests (needs PyYAML and the kind cluster).
+`check_scenarios.py` validates the scenario manifests (needs PyYAML and the kind cluster). `test-demo.py` runs the whole walkthrough (Steps 1 to 8) against a running cluster and asserts what TinyOlly shows; it takes about 25 minutes and ends with `reset`.

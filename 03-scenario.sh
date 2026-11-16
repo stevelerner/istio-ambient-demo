@@ -1,5 +1,5 @@
 #!/bin/bash
-# Apply an Istio ambient scenario (waypoint, waypoint-svc, fault, retry, timeout, canary, authz, strict) or reset them.
+# Apply an Istio ambient scenario (waypoint, waypoint-svc, fault, retry, flaky, timeout, canary, authz, strict) or reset them.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/kubectx.sh" && require_kind_context
@@ -19,6 +19,12 @@ reconnect() {
   for d in frontend checkoutservice recommendationservice; do
     kubectl rollout status -n boutique deploy/$d --timeout=180s >/dev/null
   done
+}
+
+# Record a change marker in TinyOlly so an agent (MCP what_changed) can line up cause and effect. Best effort.
+mark() {
+  curl -s -m 5 -X POST "${TINYOLLY_URL:-http://localhost:5005}/api/events" -H 'Content-Type: application/json' \
+    -d "{\"title\": \"scenario: $1\", \"source\": \"istio-ambient-demo\", \"kind\": \"scenario\", \"attributes\": {\"scenario\": \"$1\"}}" >/dev/null 2>&1 || true
 }
 
 case "${1:-}" in
@@ -44,6 +50,13 @@ case "${1:-}" in
   retry)
     need_waypoint
     kubectl apply -f "$DIR/scenarios/retry.yaml"
+    ;;
+  flaky)
+    need_waypoint
+    # The canary route sends traffic to the version-labelled v1/v2 Services, which the flaky pod is not in: remove it first.
+    kubectl delete -f "$DIR/scenarios/canary.yaml" --ignore-not-found
+    kubectl apply -f "$DIR/scenarios/flaky.yaml"
+    kubectl rollout status -n boutique deploy/productcatalogservice-flaky --timeout=120s
     ;;
   timeout)  # 200ms request timeout on the canary route cuts off the slow v2 (400ms)
     if ! kubectl get httproute productcatalog-canary -n boutique >/dev/null 2>&1; then
@@ -94,6 +107,7 @@ case "${1:-}" in
     kubectl delete pod intruder -n boutique --ignore-not-found --now >/dev/null
     kubectl delete -f "$DIR/scenarios/fault.yaml" --ignore-not-found
     kubectl delete -f "$DIR/scenarios/retry.yaml" --ignore-not-found
+    kubectl delete -f "$DIR/scenarios/flaky.yaml" --ignore-not-found
     kubectl delete -f "$DIR/scenarios/timeout.yaml" --ignore-not-found
     kubectl delete -f "$DIR/scenarios/canary.yaml" --ignore-not-found
     kubectl delete -f "$DIR/scenarios/strict-mtls.yaml" --ignore-not-found
@@ -106,7 +120,9 @@ case "${1:-}" in
     kubectl label service --all -n boutique istio.io/use-waypoint- >/dev/null 2>&1 || true
     ;;
   *)
-    echo "Usage: ./03-scenario.sh <waypoint|waypoint-svc [service]|fault|retry|timeout|canary|authz|probe|outsider|strict|reset|fresh>" >&2
+    echo "Usage: ./03-scenario.sh <waypoint|waypoint-svc [service]|fault|retry|flaky|timeout|canary|authz|probe|outsider|strict|reset|fresh>" >&2
     exit 1
     ;;
 esac
+case "${1:-}" in waypoint|waypoint-svc|fault|retry|flaky|timeout|canary|authz|probe|outsider|strict|reset) mark "$1" ;; esac
+

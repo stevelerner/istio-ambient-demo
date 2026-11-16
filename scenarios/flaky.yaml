@@ -1,0 +1,25 @@
+# Flaky: a pod that matches the productcatalogservice Service selector but never listens on 3550, so ~half of connections fail.
+# ./03-scenario.sh reset removes it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: productcatalogservice-flaky
+  namespace: boutique
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: productcatalogservice
+      version: flaky
+  template:
+    metadata:
+      labels:
+        app: productcatalogservice
+        version: flaky
+    spec:
+      containers:
+      - name: flaky
+        image: busybox:1.37
+        command: ["sleep", "86400"]
+        resources:
+          requests: {cpu: 10m, memory: 8Mi}

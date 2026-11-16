@@ -100,17 +100,23 @@ d = single("strict-mtls.yaml", "PeerAuthentication", "security.istio.io/v1")
 eq("strict-mtls name", dig(d, "metadata", "name"), "strict-mtls")
 eq("strict-mtls mode", dig(d, "spec", "mtls", "mode"), "STRICT")
 
+d = single("flaky.yaml", "Deployment", "apps/v1")
+eq("flaky name", dig(d, "metadata", "name"), "productcatalogservice-flaky")
+eq("flaky pod labels", dig(d, "spec", "template", "metadata", "labels"), {"app": "productcatalogservice", "version": "flaky"})
+eq("flaky selector", dig(d, "spec", "selector", "matchLabels"), {"app": "productcatalogservice", "version": "flaky"})
+eq("flaky has no ports", dig(d, "spec", "template", "spec", "containers", 0, "ports"), None)
+
 sh = open(SCENARIO_SH).read()
 if subprocess.run(["bash", "-n", SCENARIO_SH]).returncode:
     errors.append("03-scenario.sh has a syntax error")
-for word in ["waypoint", "waypoint-svc", "fault", "retry", "canary", "timeout", "outsider", "strict", "authz", "reset", "require_kind_context", "kubectl apply", "kubectl delete"]:
+for word in ["waypoint", "waypoint-svc", "fault", "retry", "canary", "timeout", "flaky", "outsider", "strict", "authz", "reset", "require_kind_context", "kubectl apply", "kubectl delete"]:
     if word not in sh:
         errors.append(f"03-scenario.sh does not mention {word!r}")
 out = subprocess.run(["bash", SCENARIO_SH], capture_output=True, text=True)
 if out.returncode == 0 or "waypoint" not in out.stdout + out.stderr:
     errors.append("running 03-scenario.sh with no argument must print usage naming the scenarios and exit non-zero")
 
-for f in ["fault", "retry", "authz-l4", "authz-l7", "canary", "timeout", "strict-mtls"]:
+for f in ["fault", "retry", "flaky", "authz-l4", "authz-l7", "canary", "timeout", "strict-mtls"]:
     r = subprocess.run(["kubectl", "apply", "--dry-run=server", "-f", D + f + ".yaml"], capture_output=True, text=True)
     if r.returncode:
         errors.append(f"{f}.yaml rejected by the cluster: {r.stderr.strip()[:200]}")
